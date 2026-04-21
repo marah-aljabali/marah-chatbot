@@ -171,4 +171,3 @@ if question:
 
         message_placeholder.markdown(full_response)
         st.session_state.chat_history.add_ai_message(full_response)
-```
