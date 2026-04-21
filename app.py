@@ -335,10 +335,11 @@ if question:
         for i in range(3):
             dots = "." * (i % 3 + 1)
             message_placeholder.markdown(
-                {dots},
+                dots,
                 unsafe_allow_html=True
             )
-        
+            time.sleep(0.4)
+            
         # إعداد السياق
         contextual_query = f"السؤال الحالي: {question}\nالسياق: {format_history(st.session_state.chat_history)}"
         db_docs = retriever.invoke(contextual_query)
