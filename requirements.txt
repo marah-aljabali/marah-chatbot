@@ -1,19 +1,18 @@
-streamlit
-python-dotenv # for loading environment variables
-torch # for PyTorch backend
-sentence-transformers # for sentence embeddings
-beautifulsoup4 # for web scraping
-pypdf # for PDF processing
-chromadb # for ChromaDB vector store
-langchain
-langchain-core # core components of LangChain
-langchain-community 
-langchain-chroma
-langchain-google-genai==2.0.0
-langchain-huggingface==0.1.0 # for HuggingFace integration
-tavily-python # for Tavily API
-langdetect # for language detection
-requests==2.32.3
+streamlit>=1.39.0
+python-dotenv>=1.0.0
+langchain>=0.3.0
+langchain-google-genai>=2.0.0
+langchain-huggingface>=0.1.0
+langchain-community>=0.3.0
+langchain-core>=0.3.0
+langchain-text-splitters>=0.3.0
+chromadb>=0.5.0
+sentence-transformers>=3.0.0
+tavily-python>=0.3.0
+beautifulsoup4>=4.12.0
+requests>=2.31.0
+torch>=2.0.0
+protobuf==3.20.3
 
 
 
