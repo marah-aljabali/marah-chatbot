@@ -211,6 +211,12 @@ html, body, [class*="css"] {
     font-weight: bold;
 }
 </style>
+
+
+[data-testid="stChatMessage"] .stMarkdown {
+    direction: rtl;
+    text-align: right;
+}
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -331,24 +337,26 @@ if question:
         message_placeholder = st.empty()
         full_response = ""
         
-        # 🧠 thinking UI
         thinking_placeholder = st.empty()
-        thinking_placeholder.markdown(
-            """
-            <div style="
-                background: #ffffff;
-                padding: 14px 22px;
-                border-radius: 16px 16px 16px 0;
-                box-shadow: 0 4px 24px rgba(15,31,61,.10);
-                color: #0d9488;
-                font-style: italic;
-            ">
-            🧠 Thinking...
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-        time.sleep(1.2)
+        # animation 3 dots
+        for i in range(3):
+            dots = "." * (i % 3 + 1)
+            thinking_placeholder.markdown(
+                f"""
+                <div style="
+                    background: #ffffff;
+                    padding: 14px 22px;
+                    border-radius: 16px 16px 16px 0;
+                    box-shadow: 0 4px 24px rgba(15,31,61,.10);
+                    color: #0d9488;
+                    font-style: italic;
+                ">
+                Thinking{dots}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            time.sleep(0.4)
         thinking_placeholder.empty()
         
         # إعداد السياق
@@ -371,8 +379,10 @@ if question:
         # 🎯 Prompt
         prompt = ChatPromptTemplate.from_template("""
         أنت مساعد جامعي اسمه "مرح".
-
-        - أجب بنفس لغة السؤال
+        - Detect the language of the question.
+        - If the question is in English, respond in English.
+        - If the question is in Arabic, respond in Arabic.
+        - Always match the user's language exactly.
         - استخدم أسلوب بسيط وواضح
         - اعتمد على السياق لفهم السؤال
         - قم بتزويد مصادر ومراجع للإجابة إذا تطلب الأمر
