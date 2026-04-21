@@ -12,7 +12,6 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.chat_history import InMemoryChatMessageHistory
 from tavily import TavilyClient
 
-load_dotenv()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE CONFIG
@@ -169,6 +168,18 @@ html, body, [class*="css"] {
 @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-20px); } }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
+.overlay-text {
+    font-family: 'DM Serif Display', serif;
+    font-size: 2rem;
+    color: var(--navy);
+    margin-bottom: 10px;
+}
+.overlay-sub {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 1rem;
+    color: var(--slate);
+}
+
 /* ── Typing Cursor Effect (مؤشر الكتابة) ── */
 .typing-cursor {
     display: inline-block;
@@ -181,15 +192,38 @@ html, body, [class*="css"] {
 }
 @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 
+/* ── Info/Warning Boxes ── */
+.info-box {
+    background: #eff6ff;
+    border-left: 4px solid #3b82f6;
+    border-radius: 0 10px 10px 0;
+    padding: 14px 18px;
+    font-size: .9rem;
+    color: #1e40af;
+    margin-bottom: 12px;
+}
+.warn-box {
+    background: #fefce8;
+    border-left: 4px solid var(--amber);
+    border-radius: 0 10px 10px 0;
+    padding: 14px 18px;
+    font-size: .9rem;
+    color: #92400e;
+    margin-bottom: 12px;
+}
+
 /* ── Sidebar Footer Styling ── */
 .sidebar-footer {
     border-top: 1px solid rgba(255,255,255,0.1);
     text-align: center;
+    margin-top: auto; /* يدفع الفوتر للأسفل */
+    padding-bottom: 1rem;
 }
 .sidebar-footer h4 {
     color: var(--teal);
     font-family: 'DM Serif Display', serif;
     margin-bottom: 10px;
+    font-size: 1rem;
 }
 .sidebar-footer p {
     font-size: 0.8rem;
@@ -204,10 +238,10 @@ html, body, [class*="css"] {
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# LOADING RESOURCES (مع شاشة Splash Screen بدلاً من اللودر العادي)
+# LOADING RESOURCES (Splash Screen + تفعيل الستريمنج الحقيقي)
 # ─────────────────────────────────────────────────────────────────────────────
 
-# 1. إظهار شاشة الـ Splash
+# 1. إظهار شاشة الـ Splash (تم إصلاح الكود هنا)
 load_overlay = st.empty()
 load_overlay.markdown("""
 <div class="splash-screen">
@@ -215,43 +249,38 @@ load_overlay.markdown("""
     <div class="splash-text">Marah</div>
     <div class="splash-sub">University Assistant</div>
     <div style="margin-top: 20px; font-size: 0.9rem; color: #0d9488;">Loading AI Models...</div>
-
-    st.markdown("---")
-    st.markdown("""
-    """<div class="sidebar-footer">
-      <h4>Marah Assistant</h4>
-      <p><span class="highlight">Marah Ahmed Aljabali</span></p>
-      <p>© All Rights Reserved 2026.</p>
-    </div> """
-    """, unsafe_allow_html=True) 
 </div>
 """, unsafe_allow_html=True)
 
-# 2. تحميل المكونات (سيتم حجب الواجهة الآن)
+# 2. تحميل المكونات (مع تفعيل Streaming الحقيقي)
 @st.cache_resource
 def load_components():
-    time.sleep(1) # تأخير بسيط لضمان ظهور الأنيميشن
+    time.sleep(1) 
     embeddings = HuggingFaceEmbeddings(model_name="paraphrase-multilingual-MiniLM-L12-v2")
     db = Chroma(persist_directory="university_db_app", embedding_function=embeddings)
     retriever = db.as_retriever(search_kwargs={"k": 5})
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
+    
+    # 🔥 تفعيل الـ Streaming الحقيقي من النموذج مباشرة
+    llm = ChatGoogleGenerativeAI(
+        model="gemini-2.5-flash", 
+        temperature=0, 
+        streaming=True   
+    )
     return retriever, llm
 
 try:
     retriever, llm = load_components()
-    # 3. إزالة شاشة الـ Splash بعد التحميل
     load_overlay.empty()
 except Exception as e:
     load_overlay.empty()
     st.error(f"Initialization Failed: {e}")
     st.stop()
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # LOGIC & HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
-
+load_dotenv()
 
 def format_docs(docs):
     return "\n\n".join(doc.page_content for doc in docs)
@@ -279,7 +308,6 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # SIDEBAR & SMART UPDATE LOGIC + FOOTER
 # ─────────────────────────────────────────────────────────────────────────────
@@ -288,20 +316,19 @@ with st.sidebar:
     st.markdown("### ⚙️ System Status")
     
     db_exists = os.path.exists("university_db_app")
-    st.info(f"📅 Last DB Update: **Uto Update!**")
 
-    if db_exists:
-        st.success("✅ Database is up to date.")
+    st.info(f"📅 Last DB Update: **Auto Update!**")
     
     st.markdown("---")
     st.markdown("### 🔄 Database Management")
     
     if db_exists:
         st.metric("Status", "Ready")
+        st.success("✅ Database is up to date.")
     else:
         st.metric("Status", "Missing", delta_color="inverse")
         
-    # ─── الفوتر في السايدبار (النص الذي طلبته) ───
+
     st.markdown("---")
     st.markdown("""
     <div class="sidebar-footer">
@@ -310,9 +337,9 @@ with st.sidebar:
       <p>© All Rights Reserved 2026.</p>
     </div>
     """, unsafe_allow_html=True)
-
+    
 # ─────────────────────────────────────────────────────────────────────────────
-# CHAT INTERFACE
+# CHAT INTERFACE (Real Streaming)
 # ─────────────────────────────────────────────────────────────────────────────
 
 if "chat_history" not in st.session_state:
@@ -332,9 +359,6 @@ if question:
     st.session_state.chat_history.add_user_message(question)
     with st.chat_message("user"):
         st.markdown(question)
-
-    # رسالة التفكير سريعة جداً (اختياري)
-    # with st.spinner("Marah is thinking..."): # إزالة السبينر لجعل الستريمنج يبدأ فوراً
 
     # إنشاء مكان للرسالة
     with st.chat_message("assistant"):
@@ -361,8 +385,10 @@ if question:
         # 🎯 Prompt
         prompt = ChatPromptTemplate.from_template("""
         أنت مساعد جامعي اسمه "مرح".
-
-        - أجب بنفس لغة السؤال
+        - Detect the language of the question.
+        - If the question is in English, respond in English.
+        - If the question is in Arabic, respond in Arabic.
+        - Always match the user's language exactly.
         - استخدم أسلوب بسيط وواضح
         - اعتمد على السياق لفهم السؤال
         - قم بتزويد مصادر ومراجع للإجابة إذا تطلب الأمر
@@ -385,7 +411,7 @@ if question:
         history_text = format_history(st.session_state.chat_history)
 
         try:
-            # تنفيذ التدفق (Streaming)
+            # حلقة الستريمنج الحقيقية (تقرأ من LLM مباشرة)
             for chunk in chain.stream({"context": final_context, "question": question, "history": history_text}):
                 full_response += chunk
                 # تحديث الرسالة مع مؤشر الكتابة
