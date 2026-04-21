@@ -334,7 +334,7 @@ if question:
         # animation 3 dots
         for i in range(3):
             dots = "." * (i % 3 + 1)
-            thinking_placeholder.markdown(
+            message_placeholder.markdown(
                 {dots},
                 unsafe_allow_html=True
             )
