@@ -12,7 +12,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.chat_history import InMemoryChatMessageHistory
 from tavily import TavilyClient
 
-
+load_dotenv()
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
@@ -279,8 +279,6 @@ except Exception as e:
 # ─────────────────────────────────────────────────────────────────────────────
 # LOGIC & HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
-
-load_dotenv()
 
 def format_docs(docs):
     return "\n\n".join(doc.page_content for doc in docs)
