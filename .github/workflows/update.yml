@@ -21,9 +21,16 @@ jobs:
       - name: Install libs
         run: pip install --no-cache-dir -r requirements.txt
 
+      - name: Debug files
+        run: |
+          echo "Current dir:"
+          pwd
+          echo "List data folder:"
+          ls -R data || echo "no data folder" 
+          
       - name: Run DB builder
         run: python build_db_app.py || echo "build failed"
-
+    
       - name: Commit changes
         run: |
           git config --global user.name "bot"
