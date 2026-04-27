@@ -6,7 +6,6 @@ from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader, W
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
-import hashlib
 import datetime
 import shutil
 import re
@@ -20,44 +19,72 @@ SITEMAP_URL = "https://www.iugaza.edu.ps/wp-sitemap.xml"
 UNIVERSITY_BASE_URL = "https://www.iugaza.edu.ps"
 EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
 
-# ========= دالة لتنظيف النص من القوائم والتذييلات =========
+# ========= دالة لتنظيف النص =========
 def clean_text(text):
-    # إزالة الأسطر الفارغة المتكررة والمسافات الزائدة
+    # إزالة المسافات الزائدة والأسطر الفارغة المتكررة
     text = re.sub(r'\s+', ' ', text).strip()
-    # إزالة النصوص الشائعة غير المرغوبة (قوائم وتذييلات)
-    noise_phrases = [
-        "الرئيسية", "اتصل بنا", "خريطة الموقع", "الرؤية", "الرسالة", 
-        "Copyright", "All Rights Reserved", "Facebook", "Twitter", "Instagram",
-        "القائمة", "بحث", "تسجيل الدخول", "English"
-    ]
-    # إذا كان السطر يحتوي على جملة قصيرة من العبارات أعلاه، قد نحتاج لتصفيتها بذكاء
-    # هنا سنكتفي بإزالة التكرار المفرط للمسافات والأسطر
+    # يمكن إضافة فلترات خاصة هنا إذا لزم الأمر
     return text
 
-# ========= جلب وتصفية الروابط =========
+# ========= جلب الروابط (الصفحات + أحدث الأخبار) =========
 def get_website_urls_from_sitemap(sitemap_url):
-    print("🗺️ جاري جلب خريطة الموقع...")
+    print("🗺️ جاري جلب خريطة الموقع (فهرس ذكي)...")
+    
+    session = requests.Session()
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+    
+    all_urls = []
+
     try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
-        response = requests.get(sitemap_url, headers=headers)
+        # 1. جلب الـ Sitemap الرئيسي (الفهرس)
+        print(f"⬇️ تحميل الفهرس الرئيسي...")
+        response = session.get(sitemap_url, headers=headers, timeout=20)
         response.raise_for_status()
         
         soup = BeautifulSoup(response.content, 'xml')
-        urls = [loc.text for loc in soup.find_all('loc')]
+        sitemap_tags = soup.find_all('loc')
         
-        # 🛑 فلترة الروابط لاستبعاد الأخبار والأرشيف القديم
-        exclude_keywords = ["/news/", "/events/", "/category/", "/tag/", "/author/", "/page/", "/2020/", "/2021/", "/2022/"]
-        filtered_urls = []
-        for url in urls:
-            if url.startswith(UNIVERSITY_BASE_URL) and not any(k in url for k in exclude_keywords):
-                filtered_urls.append(url)
-        
-        print(f"✅ تم العثور على {len(filtered_urls)} رابط صالح بعد الاستبعاد.")
-        return filtered_urls
+        target_sitemaps = []
+
+        # 2. تحديد الخرائط الفرعية المهمة
+        for loc in sitemap_tags:
+            url = loc.text
+            
+            # الحالة أ: الصفحات الثابتة (الأنظمة، الكليات) - نأخذها كلها
+            if "wp-sitemap-posts-page" in url:
+                target_sitemaps.append(url)
+            
+            # الحالة ب: الأخبار - نأخذ أول خريطة فقط (تحتوي الأحدث عادة)
+            # هذا يمنع دخول أخبار 2018 ويحتفظ بالأخبار الجديدة
+            if "wp-sitemap-posts-post-1.xml" in url:
+                target_sitemaps.append(url)
+
+        if not target_sitemaps:
+            raise Exception("No relevant sitemaps found")
+
+        print(f"✅ تم تحديد {len(target_sitemaps)} مصدر للبيانات.")
+
+        # 3. استخراج الروابط الفعلية من الخرائط الفرعية
+        for sitemap_url in target_sitemaps:
+            try:
+                print(f"📥 جاري قراءة: {sitemap_url.split('/')[-1]}")
+                sub_response = session.get(sitemap_url, headers=headers, timeout=20)
+                sub_soup = BeautifulSoup(sub_response.content, 'xml')
+                
+                for loc in sub_soup.find_all('loc'):
+                    url = loc.text
+                    all_urls.append(url)
+            except Exception as e:
+                print(f"⚠️ خطأ في قراءة خريطة فرعية: {e}")
+
+        print(f"🎉 تم استخراج {len(all_urls)} رابط.")
+
     except Exception as e:
-        print(f"❌ خطأ في جلب خريطة الموقع: {e}")
-        # قائمة احتياطية لأهم الصفحات فقط
-        return [
+        print(f"❌ فشل جلب الـ Sitemap: {e}")
+        print("🔄 استخدام القائمة الاحتياطية...")
+        all_urls = [
             f"{UNIVERSITY_BASE_URL}/",
             f"{UNIVERSITY_BASE_URL}/aboutiug/",
             f"{UNIVERSITY_BASE_URL}/facalties/",
@@ -69,45 +96,52 @@ def get_website_urls_from_sitemap(sitemap_url):
             f"{UNIVERSITY_BASE_URL}/أخبار-الجامعة/"
         ]
 
+    return all_urls
+
 # ========= بناء قاعدة البيانات =========
 def build_database():
-    print("🚀 بدء بناء قاعدة المعرفة (الموقع والـ PDF)...")
+    print("🚀 بدء عملية بناء قاعدة المعرفة...")
+    start_time = datetime.datetime.now()
 
     all_documents = []
 
     # ===== 🌐 تحميل الموقع =====
     urls = get_website_urls_from_sitemap(SITEMAP_URL)
     
-    # تحديد عدد الروابط: نأخذ أول 50 رابط بعد الفلترة لضمان الجودة على الكمية
-    urls = urls[:100] 
-
     if urls:
-        print(f"📥 جاري تحميل المحتوى من {len(urls)} صفحة ويب...")
+        print(f"📥 جاري تحميل المحتوى من {len(urls)} رابط...")
         
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         }
 
         try:
-            # نستخدم bs_kwargs لمحاولة جلب المحتوى الرئيسي فقط (مثل <main> أو <article>)
-            # لكن إذا فشل، سيعود لتحميل الصفحة كاملة، لذا سنقوم بالتنظيف لاحقاً
+            # تحديد المناطق المستهدفة في HTML لتقليل الضوضاء
+            bs_kwargs = {"parse_only": SoupStrainer(["main", "article", "div", "body"])}
+            
             web_loader = WebBaseLoader(
                 urls,
                 continue_on_failure=True, 
-                requests_per_second=1, # تخفيف الحمل على السيرفر
+                requests_per_second=1, # لطيف مع السيرفر
                 requests_kwargs={"headers": headers}, 
-                bs_kwargs={"parse_only": SoupStrainer(["main", "article", "div", "body"])} 
+                bs_kwargs=bs_kwargs
             )
             web_documents = web_loader.load()
             
-            # تنظيف النصوص المستخرجة
+            # تنظيف وتصنيف الوثائق
             for doc in web_documents:
                 doc.page_content = clean_text(doc.page_content)
                 doc.metadata["source"] = "website"
                 
+                url = doc.metadata.get('source', '')
+                # تصنيف المصدر (هل هو خبر أم صفحة ثابتة؟)
+                if "/news/" in url or "/202" in url:
+                    doc.metadata["type"] = "news"
+                else:
+                    doc.metadata["type"] = "page"
+                
             all_documents.extend(web_documents)
-            print(f"✅ تم تحميل وتنظيف {len(web_documents)} وثيقة من الموقع.")
+            print(f"✅ تم معالجة {len(web_documents)} صفحة ويب.")
         except Exception as e:
             print(f"❌ خطأ أثناء تحميل الموقع: {e}")
 
@@ -123,7 +157,6 @@ def build_database():
 
             for doc in pdf_docs:
                 doc.metadata["source"] = "pdf"
-                # تنظيف الـ PDF أيضاً
                 doc.page_content = clean_text(doc.page_content)
 
             all_documents.extend(pdf_docs)
@@ -135,10 +168,10 @@ def build_database():
         print("❌ لا توجد مستندات لمعالجتها!")
         return
 
-    # ===== ✂️ تقسيم (زيادة الحجم لتحسين السياق) =====
+    # ===== ✂️ تقسيم (Chunking) =====
     print("✂️ تقسيم النصوص...")
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,  # زيادة الحجم من 500 إلى 1000 للحصول على سياق أفضل
+        chunk_size=1000, # زيادة الحجم لسياق أفضل
         chunk_overlap=200
     )
     chunks = splitter.split_documents(all_documents)
@@ -161,10 +194,13 @@ def build_database():
             persist_directory=DB_PATH
         )
         
+        end_time = datetime.datetime.now()
+        duration = (end_time - start_time).total_seconds()
+        
         with open("last_update.txt", "w", encoding="utf-8") as f:
-            f.write(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            f.write(end_time.strftime("%Y-%m-%d %H:%M:%S"))
             
-        print("🎉 تم تحديث قاعدة البيانات بنجاح!")
+        print(f"🎉 تم تحديث قاعدة البيانات بنجاح! (المدة: {duration:.2f} ثانية)")
     except Exception as e:
         print(f"❌ خطأ أثناء حفظ قاعدة البيانات: {e}")
 
