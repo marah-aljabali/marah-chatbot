@@ -58,12 +58,15 @@ def get_website_urls_from_sitemap(sitemap_url):
         print(f"❌ خطأ في جلب خريطة الموقع: {e}")
         # قائمة احتياطية لأهم الصفحات فقط
         return [
+            f"{UNIVERSITY_BASE_URL}/",
             f"{UNIVERSITY_BASE_URL}/aboutiug/",
             f"{UNIVERSITY_BASE_URL}/facalties/",
             f"{UNIVERSITY_BASE_URL}/division/",
             f"{UNIVERSITY_BASE_URL}/e3lan/",
             f"{UNIVERSITY_BASE_URL}/eservices/",
             f"{UNIVERSITY_BASE_URL}/newstd/",
+            f"{UNIVERSITY_BASE_URL}/eservices/",
+            f"{UNIVERSITY_BASE_URL}/أخبار-الجامعة/"
         ]
 
 # ========= بناء قاعدة البيانات =========
