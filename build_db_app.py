@@ -18,7 +18,6 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 
-# مكتبة تنظيف الـ HTML (هامة جداً هنا)
 from bs4 import BeautifulSoup
 
 # ========= إعدادات =========
@@ -29,13 +28,9 @@ DB_PATH = "university_db_app"
 UNIVERSITY_BASE_URL = "https://www.iugaza.edu.ps"
 EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2" 
 
-# ========= دالة السكرابنج المتطورة (تركز على <a> والمحتوى) =========
+# ========= دالة السكرابنج (محسنة مع انتظار ذكي) =========
 def scrape_with_selenium(urls):
-    """
-    تستخدم Selenium لفتح الموقع ثم BeautifulSoup لتفكيك الـ HTML
-    واستخراج النصوص المهمة من الروابط والفقرات.
-    """
-    print(f"🌐 Initializing Selenium & BeautifulSoup for {len(urls)} pages...")
+    print(f"🌐 Initializing Selenium for {len(urls)} pages (Smart Wait Mode)...")
     
     options = Options()
     options.add_argument("--headless")
@@ -50,56 +45,52 @@ def scrape_with_selenium(urls):
     try:
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=options)
-        driver.set_page_load_timeout(30)
+        driver.set_page_load_timeout(45) # زدنا وقت التحميل
 
         for i, url in enumerate(urls):
             try:
                 print(f"🔍 Scraping [{i+1}/{len(urls)}]: {url}")
                 driver.get(url)
                 
-                # انتظار تحميل الجافا سكريبت
-                time.sleep(5) 
+                # ⏱️ إستراتيجية الانتظار:
+                # ننتظر 10 ثواني، إذا اكتشفنا صفحة تحقق ننتظر 15 ثانية إضافية
+                time.sleep(10)
+                
+                # فحص سريع هل الصفحة تقول "Enable JS" أو "Checking browser"؟
+                if "Enable JavaScript" in driver.page_source or "Checking your browser" in driver.page_source or "Attention Required" in driver.page_source:
+                    print("   ⏳ Detected Challenge/Loading page... Waiting extra 15s.")
+                    time.sleep(15)
 
-                # جلب مصدر الصفحة بالكامل (HTML)
+                # جلب الكود
                 html_content = driver.page_source
-
-                # استخدام BeautifulSoup لتحليل الـ HTML
                 soup = BeautifulSoup(html_content, 'html.parser')
 
-                # 🧹 تنظيف هيكلي: نحذف السكريبتات والستايلات لأنها لا تحتوي معلومات جامعية
+                # تنظيف السكريبتات
                 for element in soup(["script", "style", "noscript", "iframe"]):
                     element.decompose()
 
-                # 📝 استخراج النصوص:
-                # بما أن أهم شيء في <a>، سنحاول الحفاظ على سياق الروابط.
-                # سنقوم بإخراج النصوص من الفقرات p، العناوين h1-h6، والروابط a
-                
+                # استخراج البيانات كما في السابق (Links + Text)
                 extracted_parts = []
                 
-                # 1. استخراج الروابط المهمة (<a>)
                 for a_tag in soup.find_all('a'):
-                    href = a_tag.get('href', '')
                     text = a_tag.get_text(strip=True)
-                    if text:
-                        # إذا كان الرابط داخلي أو يحتوي نصاً مفيداً، نضيفه
-                        # نضيف نص الرابط مع علامة "رابط" ليعرف الذكاء أنه مسار
-                        extracted_parts.append(f"Link: {text}")
+                    if text: extracted_parts.append(f"Link: {text}")
                 
-                # 2. استخراج الفقرات والعناوين (للإجابات التفصيلية)
                 for tag in soup.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li']):
                     text = tag.get_text(strip=True)
-                    if text:
-                        extracted_parts.append(text)
+                    if text: extracted_parts.append(text)
 
-                # دمج النصوص
                 full_text = "\n".join(extracted_parts)
 
-                if full_text and len(full_text.strip()) > 50: # قللنا الحد الأدنى لأن أسماء الروابط قد تكون قصيرة
+                # 🐞 التشخيص: طباعة أول 150 حرف لنرى ماذا جلب
+                print(f"   📝 Content Sample: {full_text[:150]}...")
+
+                if full_text and len(full_text.strip()) > 50:
                     doc = Document(page_content=full_text, metadata={"source": url})
                     documents.append(doc)
-                    print(f"   ✅ Success: Extracted {len(full_text)} chars (Including Links).")
+                    print(f"   ✅ Success: Extracted {len(full_text)} chars.")
                 else:
-                    print(f"   ⚠️ Skipped: Content too short.")
+                    print(f"   ⚠️ Skipped: Content too short or invalid.")
 
             except Exception as e:
                 print(f"   ❌ Error scraping {url}: {e}")
@@ -116,9 +107,8 @@ def scrape_with_selenium(urls):
 
 # ========= إعدادات الروابط =========
 def get_urls():
-    # قائمة الروابط التي تغطي أقسام الجامعة المختلفة
     return [
-         f"{UNIVERSITY_BASE_URL}/",
+        f"{UNIVERSITY_BASE_URL}/",
             f"{UNIVERSITY_BASE_URL}/aboutiug/",
             f"{UNIVERSITY_BASE_URL}/facalties/",
             f"{UNIVERSITY_BASE_URL}/division/",
@@ -131,14 +121,13 @@ def get_urls():
 
 # ========= بناء قاعدة البيانات =========
 def build_database():
-    print("🚀 Starting Database Construction (Link-Oriented)...")
+    print("🚀 Starting Database Construction (Smart Wait)...")
 
     all_documents = []
 
-    # ===== 🌐 تحميل الموقع (Selenium + BS4) =====
+    # ===== 🌐 تحميل الموقع =====
     urls = get_urls()
     web_documents = scrape_with_selenium(urls)
-    
     all_documents.extend(web_documents)
 
     # ===== 📄 تحميل PDF =====
