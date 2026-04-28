@@ -157,7 +157,7 @@ def load_components():
     
     # تفعيل الستريمنج
     llm = ChatGoogleGenerativeAI(
-        model="gemini-2.0-flash-exp", # أو gemini-pro حسب ما هو متاح لك
+        model="gemini-2.5-flash", # أو gemini-pro حسب ما هو متاح لك
         temperature=0.1, # قللتها قليلاً لتكون أكثر دقة
         streaming=True   
     )
