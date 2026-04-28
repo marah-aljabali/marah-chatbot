@@ -1,186 +1,134 @@
+
 import os
-import re
-import time
-import shutil
-import datetime
+import requests
+from bs4 import BeautifulSoup, SoupStrainer
 from dotenv import load_dotenv
-
-# مكتبات Selenium
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
-
-# مكتبات LangChain
-from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader
-from langchain_core.documents import Document
+from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader, WebBaseLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
+import datetime
+import time
 
-from bs4 import BeautifulSoup
-
-# ========= إعدادات =========
+# --- إعدادات ---
 load_dotenv()
-
+# مسارات الملفات
 DATA_PATH = "data/pdfs"
-DB_PATH = "university_db_app"
+CHROMA_DB_PATH = "university_db"
+# إعدادات النماذج
+EMBEDDING_MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
+# إعدادات الموقع
+UNIVERSITY_SITEMAP_URL = "https://www.iugaza.edu.ps/wp-sitemap.xml"
 UNIVERSITY_BASE_URL = "https://www.iugaza.edu.ps"
-EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2" 
 
-# ========= دالة السكرابنج (محسنة مع انتظار ذكي) =========
-def scrape_with_selenium(urls):
-    print(f"🌐 Initializing Selenium for {len(urls)} pages (Smart Wait Mode)...")
-    
-    options = Options()
-    options.add_argument("--headless")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
-
-    driver = None
-    documents = []
-
+def get_website_urls_from_sitemap(sitemap_url):
+    """
+    دالة لجلب كل الروابط من ملف sitemap.xml الخاص بالموقع.
+    """
+    print("🗺️ جاري جلب خريطة الموقع...")
     try:
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=options)
-        driver.set_page_load_timeout(45) # زدنا وقت التحميل
-
-        for i, url in enumerate(urls):
-            try:
-                print(f"🔍 Scraping [{i+1}/{len(urls)}]: {url}")
-                driver.get(url)
-                
-                # ⏱️ إستراتيجية الانتظار:
-                # ننتظر 10 ثواني، إذا اكتشفنا صفحة تحقق ننتظر 15 ثانية إضافية
-                time.sleep(10)
-                
-                # فحص سريع هل الصفحة تقول "Enable JS" أو "Checking browser"؟
-                if "Enable JavaScript" in driver.page_source or "Checking your browser" in driver.page_source or "Attention Required" in driver.page_source:
-                    print("   ⏳ Detected Challenge/Loading page... Waiting extra 15s.")
-                    time.sleep(15)
-
-                # جلب الكود
-                html_content = driver.page_source
-                soup = BeautifulSoup(html_content, 'html.parser')
-
-                # تنظيف السكريبتات
-                for element in soup(["script", "style", "noscript", "iframe"]):
-                    element.decompose()
-
-                # استخراج البيانات كما في السابق (Links + Text)
-                extracted_parts = []
-                
-                for a_tag in soup.find_all('a'):
-                    text = a_tag.get_text(strip=True)
-                    if text: extracted_parts.append(f"Link: {text}")
-                
-                for tag in soup.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li']):
-                    text = tag.get_text(strip=True)
-                    if text: extracted_parts.append(text)
-
-                full_text = "\n".join(extracted_parts)
-
-                # 🐞 التشخيص: طباعة أول 150 حرف لنرى ماذا جلب
-                print(f"   📝 Content Sample: {full_text[:150]}...")
-
-                if full_text and len(full_text.strip()) > 50:
-                    doc = Document(page_content=full_text, metadata={"source": url})
-                    documents.append(doc)
-                    print(f"   ✅ Success: Extracted {len(full_text)} chars.")
-                else:
-                    print(f"   ⚠️ Skipped: Content too short or invalid.")
-
-            except Exception as e:
-                print(f"   ❌ Error scraping {url}: {e}")
-                continue
-
+        response = requests.get(sitemap_url)
+        response.raise_for_status() # التأكد من أن الطلب ناجح
+        
+        soup = BeautifulSoup(response.content, 'xml')
+        urls = [loc.text for loc in soup.find_all('loc')]
+        
+        # فلترة الروابط للتأكد من أنها تابعة للموقع الرئيسي
+        valid_urls = [url for url in urls if url.startswith(UNIVERSITY_BASE_URL)]
+        
+        print(f"✅ تم العثور على {len(valid_urls)} رابط صالح في خريطة الموقع.")
+        return valid_urls
     except Exception as e:
-        print(f"❌ Selenium/BS4 Error: {e}")
-    finally:
-        if driver:
-            driver.quit()
-            
-    print(f"🎉 Scraping finished. Collected {len(documents)} documents.")
-    return documents
-
-# ========= إعدادات الروابط =========
-def get_urls():
-    return [
-        f"{UNIVERSITY_BASE_URL}/",
+        print(f"❌ خطأ في جلب خريطة الموقع: {e}")
+        print("🔄 الرجوع إلى قائمة روابط يدوية...")
+        # قائمة احتياطية في حال فشل قراءة الـ Sitemap
+        return [
+            f"{UNIVERSITY_BASE_URL}/",
             f"{UNIVERSITY_BASE_URL}/aboutiug/",
-            f"{UNIVERSITY_BASE_URL}/facalties/",
+            f"{UNIVERSITY_BASE_URL}/faculties/",
             f"{UNIVERSITY_BASE_URL}/division/",
-            f"{UNIVERSITY_BASE_URL}/e3lan/",
+            f"{UNIVERSITY_BASE_URL}/centers/",
             f"{UNIVERSITY_BASE_URL}/eservices/",
             f"{UNIVERSITY_BASE_URL}/newstd/",
             f"{UNIVERSITY_BASE_URL}/eservices/",
-            f"{UNIVERSITY_BASE_URL}/أخبار-الجامعة/"
-    ]
+            f"{UNIVERSITY_BASE_URL}/eservices/"
+        ]
 
-# ========= بناء قاعدة البيانات =========
 def build_database():
-    print("🚀 Starting Database Construction (Smart Wait)...")
+    """
+    دالة رئيسية لقراءة ملفات PDF والموقع الإلكتروني وبناء قاعدة البيانات المتجهية.
+    """
+    print("🚀 بدء بناء قاعدة المعرفة الشاملة...")
 
     all_documents = []
 
-    # ===== 🌐 تحميل الموقع =====
-    urls = get_urls()
-    web_documents = scrape_with_selenium(urls)
-    all_documents.extend(web_documents)
+    # --- الجزء الأول: تحميل المحتوى من الموقع الإلكتروني ---
+    print("\n--- بدء معالجة المحتوى من الموقع الإلكتروني ---")
+    website_urls = get_website_urls_from_sitemap(UNIVERSITY_SITEMAP_URL)
+    
+    if website_urls:
+        print("📥 جاري تحميل المحتوى من صفحات الويب...")
+        # WebBaseLoader يمكنه التعامل مع قائمة من الروابط
+        # لاحظ أننا نستخدم bs4.Strategy لاستخراج النصوص فقط
+        web_loader = WebBaseLoader(
+            website_urls,
+            continue_on_failure=True, # استمرار التحميل حتى لو فشلت بعض الصفحات
+            requests_per_second=1,   # إبطاء الطلبات لتجنب حظر السيرفر
+            bs_kwargs={"parse_only": SoupStrainer("body")} # تحليل جزء الـ body فقط لتسريع العملية
+        )
+        web_documents = web_loader.load()
+        print(f"✅ تم تحميل {len(web_documents)} وثيقة من الموقع الإلكتروني.")
+        all_documents.extend(web_documents)
 
-    # ===== 📄 تحميل PDF =====
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    absolute_data_path = os.path.join(current_dir, DATA_PATH)
-
-    if os.path.exists(absolute_data_path):
-        print("📥 Loading PDF files...")
-        try:
-            pdf_loader = DirectoryLoader(absolute_data_path, loader_cls=PyPDFLoader, silent_errors=True)
-            pdf_docs = pdf_loader.load()
-            print(f"✅ Loaded {len(pdf_docs)} pages from PDF files.")
-            all_documents.extend(pdf_docs)
-        except Exception as e:
-            print(f"❌ PDF Loading Error: {e}")
+    # --- الجزء الثاني: تحميل ملفات PDF ---
+    print("\n--- بدء معالجة ملفات PDF ---")
+    if os.path.exists(DATA_PATH):
+        print("📥 جاري تحميل ملفات PDF...")
+        pdf_loader = DirectoryLoader(
+            DATA_PATH,
+            glob="**/*.pdf",
+            loader_cls=PyPDFLoader,
+            recursive=True,
+            show_progress=True
+        )
+        pdf_documents = pdf_loader.load()
+        print(f"✅ تم تحميل {len(pdf_documents)} وثيقة من ملفات PDF.")
+        all_documents.extend(pdf_documents)
+    else:
+        print(f"⚠️ مجلد البيانات '{DATA_PATH}' غير موجود. سيتم تجاهل ملفات PDF.")
 
     if not all_documents:
-        print("❌ No documents to process!")
+        print("❌ لم يتم العثور على أي وثائق من الموقع أو ملفات PDF. لا يمكن بناء قاعدة البيانات.")
         return
 
-    # ===== ✂️ تقسيم النصوص =====
-    print("✂️ Splitting text into chunks...")
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200,
-        length_function=len,
-        separators=["\n\n", "\n", " ", ". ", "،", ""]
+    # --- الجزء الثالث: تقسيم ومعالجة كل الوثائق ---
+    print(f"\n✂️ جاري تقسيم إجمالي {len(all_documents)} وثيقة...")
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=200)
+    chunks = text_splitter.split_documents(all_documents)
+    print(f"✅ تم تقسيم الوثائق إلى {len(chunks)} جزء.")
+
+    # --- الجزء الرابع: بناء قاعدة البيانات المتجهية ---
+    print("🧠 جاري تحميل نموذج التضمين...")
+    embeddings = HuggingFaceEmbeddings(
+        model_name=EMBEDDING_MODEL_NAME,
+        model_kwargs={'device': 'cpu'}
     )
-    chunks = splitter.split_documents(all_documents)
-    print(f"✅ Final chunks count: {len(chunks)}")
 
-    # ===== 🧠 Embeddings & Save =====
-    print(f"🧠 Loading Embedding Model: {EMBEDDING_MODEL}...")
-    embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
-
-    print("💾 Building Vector Database...")
-    
-    if os.path.exists(DB_PATH):
-        shutil.rmtree(DB_PATH)
-
-    try:
-        Chroma.from_documents(
-            documents=chunks,
-            embedding=embeddings,
-            persist_directory=DB_PATH
-        )
+    print("💾 جاري بناء قاعدة البيانات المتجهية الموحدة...")
+    if os.path.exists(CHROMA_DB_PATH):
+        import shutil
+        shutil.rmtree(CHROMA_DB_PATH)
         
-        with open("last_update.txt", "w", encoding="utf-8") as f:
-            f.write(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-            
-        print(f"🎉 Database Updated Successfully!")
-    except Exception as e:
-        print(f"❌ Error saving database: {e}")
+    Chroma.from_documents(
+        documents=chunks,
+        embedding=embeddings,
+        persist_directory=CHROMA_DB_PATH
+    )
+    print(f"✅ تم بناء قاعدة المعرفة الشاملة بنجاح في مجلد '{CHROMA_DB_PATH}'.")
+
+    with open("last_update.txt", "w", encoding="utf-8") as f:
+        f.write(f"آخر تحديث لقاعدة البيانات: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("✅ تم تحديث ملف آخر تحديث.")
 
 if __name__ == "__main__":
     build_database()
