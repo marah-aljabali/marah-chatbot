@@ -26,6 +26,7 @@ load_dotenv()
 
 DATA_PATH = "data/pdfs"
 DB_PATH = "university_db_app"
+UNIVERSITY_BASE_URL = "https://www.iugaza.edu.ps"
 EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2" 
 
 # ========= دالة السكرابنج المتطورة (تركز على <a> والمحتوى) =========
