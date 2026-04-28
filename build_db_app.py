@@ -1,65 +1,123 @@
 import os
-import requests
 import re
-from bs4 import BeautifulSoup, SoupStrainer
+import time
+import shutil
+import datetime
 from dotenv import load_dotenv
-from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader, WebBaseLoader
+
+# مكتبات Selenium
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
+
+# مكتبات LangChain
+from langchain_community.document_loaders import DirectoryLoader, PyPDFLoader
+from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
-import hashlib
-import datetime
-import shutil
+
+# مكتبة تنظيف الـ HTML (هامة جداً هنا)
+from bs4 import BeautifulSoup
 
 # ========= إعدادات =========
 load_dotenv()
 
 DATA_PATH = "data/pdfs"
 DB_PATH = "university_db_app"
-SITEMAP_URL = "https://www.iugaza.edu.ps/wp-sitemap.xml"
-UNIVERSITY_BASE_URL = "https://www.iugaza.edu.ps"
 EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2" 
 
-# ========= دالة تنظيف الويب (مرنة أكثر) =========
-def clean_html_text(text):
+# ========= دالة السكرابنج المتطورة (تركز على <a> والمحتوى) =========
+def scrape_with_selenium(urls):
     """
-    تنظيف خفيف جداً لضمان عدم حذف المعلومات المهمة.
+    تستخدم Selenium لفتح الموقع ثم BeautifulSoup لتفكيك الـ HTML
+    واستخراج النصوص المهمة من الروابط والفقرات.
     """
-    if not text:
-        return ""
+    print(f"🌐 Initializing Selenium & BeautifulSoup for {len(urls)} pages...")
     
-    # إزالة الأسطر الفارغة المتكررة فقط للحفاظ على المعلومات
-    text = re.sub(r'\n+', '\n', text)
-    text = re.sub(r'[ \t]+', ' ', text)
-    
-    # سنعتمد على Splitter لاحقاً لتنظيف الباقي، هنا فقط ننظّم النص
-    return text.strip()
+    options = Options()
+    options.add_argument("--headless")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36")
 
-# ========= جلب الروابط (مع قائمة احتياطية أغنى) =========
-def get_website_urls_from_sitemap(sitemap_url):
-    print("🗺️ Fetching Sitemap...")
+    driver = None
+    documents = []
+
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-        }
-        response = requests.get(sitemap_url, headers=headers, timeout=30)
-        response.raise_for_status()
-        
-        soup = BeautifulSoup(response.content, 'xml')
-        urls = [loc.text for loc in soup.find_all('loc')]
-        
-        valid_urls = [url for url in urls if url.startswith(UNIVERSITY_BASE_URL)]
-        
-        # فلترة الروابط لتجنب الميديا
-        valid_urls = [url for url in valid_urls if not any(x in url.lower() for x in ['.jpg', '.png', '.pdf', 'video', 'attachment'])]
-        
-        print(f"✅ Found {len(valid_urls)} valid URLs from Sitemap.")
-        return valid_urls
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=options)
+        driver.set_page_load_timeout(30)
+
+        for i, url in enumerate(urls):
+            try:
+                print(f"🔍 Scraping [{i+1}/{len(urls)}]: {url}")
+                driver.get(url)
+                
+                # انتظار تحميل الجافا سكريبت
+                time.sleep(5) 
+
+                # جلب مصدر الصفحة بالكامل (HTML)
+                html_content = driver.page_source
+
+                # استخدام BeautifulSoup لتحليل الـ HTML
+                soup = BeautifulSoup(html_content, 'html.parser')
+
+                # 🧹 تنظيف هيكلي: نحذف السكريبتات والستايلات لأنها لا تحتوي معلومات جامعية
+                for element in soup(["script", "style", "noscript", "iframe"]):
+                    element.decompose()
+
+                # 📝 استخراج النصوص:
+                # بما أن أهم شيء في <a>، سنحاول الحفاظ على سياق الروابط.
+                # سنقوم بإخراج النصوص من الفقرات p، العناوين h1-h6، والروابط a
+                
+                extracted_parts = []
+                
+                # 1. استخراج الروابط المهمة (<a>)
+                for a_tag in soup.find_all('a'):
+                    href = a_tag.get('href', '')
+                    text = a_tag.get_text(strip=True)
+                    if text:
+                        # إذا كان الرابط داخلي أو يحتوي نصاً مفيداً، نضيفه
+                        # نضيف نص الرابط مع علامة "رابط" ليعرف الذكاء أنه مسار
+                        extracted_parts.append(f"Link: {text}")
+                
+                # 2. استخراج الفقرات والعناوين (للإجابات التفصيلية)
+                for tag in soup.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li']):
+                    text = tag.get_text(strip=True)
+                    if text:
+                        extracted_parts.append(text)
+
+                # دمج النصوص
+                full_text = "\n".join(extracted_parts)
+
+                if full_text and len(full_text.strip()) > 50: # قللنا الحد الأدنى لأن أسماء الروابط قد تكون قصيرة
+                    doc = Document(page_content=full_text, metadata={"source": url})
+                    documents.append(doc)
+                    print(f"   ✅ Success: Extracted {len(full_text)} chars (Including Links).")
+                else:
+                    print(f"   ⚠️ Skipped: Content too short.")
+
+            except Exception as e:
+                print(f"   ❌ Error scraping {url}: {e}")
+                continue
+
     except Exception as e:
-        print(f"❌ Sitemap Error: {e}")
-        # قائمة احتياطية أغنى بروابط ذات محتوى نصي مرجح
-        return [
-            f"{UNIVERSITY_BASE_URL}/",
+        print(f"❌ Selenium/BS4 Error: {e}")
+    finally:
+        if driver:
+            driver.quit()
+            
+    print(f"🎉 Scraping finished. Collected {len(documents)} documents.")
+    return documents
+
+# ========= إعدادات الروابط =========
+def get_urls():
+    # قائمة الروابط التي تغطي أقسام الجامعة المختلفة
+    return [
+         f"{UNIVERSITY_BASE_URL}/",
             f"{UNIVERSITY_BASE_URL}/aboutiug/",
             f"{UNIVERSITY_BASE_URL}/facalties/",
             f"{UNIVERSITY_BASE_URL}/division/",
@@ -67,65 +125,20 @@ def get_website_urls_from_sitemap(sitemap_url):
             f"{UNIVERSITY_BASE_URL}/eservices/",
             f"{UNIVERSITY_BASE_URL}/newstd/",
             f"{UNIVERSITY_BASE_URL}/eservices/",
-            f"{UNIVERSITY_BASE_URL}/أخبار-الجامعة",
-        ]
+            f"{UNIVERSITY_BASE_URL}/أخبار-الجامعة/"
+    ]
 
 # ========= بناء قاعدة البيانات =========
 def build_database():
-    print("🚀 Starting Database Construction (Web + PDF)...")
+    print("🚀 Starting Database Construction (Link-Oriented)...")
 
     all_documents = []
 
-    # ===== 🌐 تحميل الموقع =====
-    urls = get_website_urls_from_sitemap(SITEMAP_URL)
+    # ===== 🌐 تحميل الموقع (Selenium + BS4) =====
+    urls = get_urls()
+    web_documents = scrape_with_selenium(urls)
     
-    # سنأخذ الروابط كما هي لنجرب جميعها
-    print(f"📥 Loading content from {len(urls)} web pages...")
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    }
-
-    if urls:
-        try:
-            web_loader = WebBaseLoader(
-                urls,
-                continue_on_failure=True, 
-                requests_per_second=1,
-                requests_kwargs={"headers": headers},
-                bs_kwargs={"parse_only": SoupStrainer("body")}
-            )
-            web_documents = web_loader.load()
-            
-            print(f"⚠️ Raw documents fetched: {len(web_documents)}")
-            
-            # ✨ عملية التنظيف والتشخيص
-            cleaned_web_docs = []
-            for i, doc in enumerate(web_documents):
-                raw_text = doc.page_content
-                cleaned_text = clean_html_text(raw_text)
-                
-                raw_len = len(raw_text)
-                clean_len = len(cleaned_text)
-                url = doc.metadata.get('source', 'unknown')
-
-                # 🔥 طباعة التشخيص (هام جداً لمعرفة ما يحدث)
-                print(f"🔍 [DEBUG {i+1}] URL: {url} | Raw: {raw_len} chars -> Cleaned: {clean_len} chars")
-                
-                # خفضنا الحد الأدنى من 100 إلى 50 للتأكد من عدم ضياع الصفحات القصيرة
-                if clean_len > 50: 
-                    doc.page_content = cleaned_text
-                    doc.metadata["source"] = "website"
-                    cleaned_web_docs.append(doc)
-                else:
-                    # طباعة عينة من النص إذا تم حذفه
-                    print(f"⚠️ Dropped (Short). Content: {cleaned_text[:100]}")
-            
-            print(f"✅ Final Cleaned Web Documents: {len(cleaned_web_docs)}")
-            all_documents.extend(cleaned_web_docs)
-        except Exception as e:
-            print(f"❌ Web Loading Error: {e}")
+    all_documents.extend(web_documents)
 
     # ===== 📄 تحميل PDF =====
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -140,8 +153,6 @@ def build_database():
             all_documents.extend(pdf_docs)
         except Exception as e:
             print(f"❌ PDF Loading Error: {e}")
-    else:
-        print("⚠️ Warning: data/pdfs directory not found.")
 
     if not all_documents:
         print("❌ No documents to process!")
@@ -153,7 +164,7 @@ def build_database():
         chunk_size=1000,
         chunk_overlap=200,
         length_function=len,
-        separators=["\n\n", "\n", " ", ". ", "，", ""]
+        separators=["\n\n", "\n", " ", ". ", "،", ""]
     )
     chunks = splitter.split_documents(all_documents)
     print(f"✅ Final chunks count: {len(chunks)}")
@@ -165,7 +176,6 @@ def build_database():
     print("💾 Building Vector Database...")
     
     if os.path.exists(DB_PATH):
-        print(f"🧹 Cleaning old database at {DB_PATH}...")
         shutil.rmtree(DB_PATH)
 
     try:
@@ -175,16 +185,12 @@ def build_database():
             persist_directory=DB_PATH
         )
         
-        update_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with open("last_update.txt", "w", encoding="utf-8") as f:
-            f.write(update_time)
+            f.write(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
             
-        print(f"🎉 Database Updated Successfully! ({update_time})")
+        print(f"🎉 Database Updated Successfully!")
     except Exception as e:
         print(f"❌ Error saving database: {e}")
-
-def get_hash(text):
-    return hashlib.md5(text.encode()).hexdigest()
 
 if __name__ == "__main__":
     build_database()
