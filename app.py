@@ -269,7 +269,7 @@ load_overlay.markdown("""
 def load_components():
     # تصحيح اسم المودل إلى الإصدار المتاح والمستقر
     llm = ChatGoogleGenerativeAI(
-        model="gemini-1.5-flash", 
+        model="gemini-2.5-flash", 
         temperature=0, 
         streaming=True,
         safety_settings=None # قد يكون مطلوباً لبعض المحتويات الجامعية
