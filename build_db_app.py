@@ -1,4 +1,5 @@
 import os
+import re
 import requests
 from bs4 import BeautifulSoup, SoupStrainer
 from dotenv import load_dotenv
@@ -21,18 +22,21 @@ EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
 
 # ========= تنظيف النصوص (جديد) =========
 def clean_text(text):
-    """تنظيف النصوص من المسافات الزائدة والأسطر الفارغة لزيادة دقة البحث"""
+    # 1. توحيد نهايات الأسطر
     text = text.replace('\r', '\n')
-    # إزالة الأسطر المتكررة
+    # 2. إزالة المسافات الزائدة بين الكلمات فقط
+    text = re.sub(r' +', ' ', text)
+    # 3. إزالة الأسطر الفارغة أو الأسطر التي لا تحتوي على أي حرف عربي أو رقم
     lines = text.split('\n')
-    unique_lines = []
-    prev_line = ""
+    cleaned_lines = []
     for line in lines:
         stripped = line.strip()
-        if stripped and stripped != prev_line:
-            unique_lines.append(stripped)
-            prev_line = stripped
-    return " ".join(unique_lines)
+        # نحتفظ بالسطر إذا كان له طول معقول (أكبر من حرفين) لتجنب الرموز المنفردة
+        if len(stripped) > 2:
+            cleaned_lines.append(stripped)
+    
+    # نرجع النص مفصولاً بمسافة واحدة
+    return " ".join(cleaned_lines)
 
 # ========= جلب الروابط (محسّن) =========
 def get_website_urls_from_sitemap(sitemap_url):
