@@ -51,7 +51,7 @@ def load_components():
     retriever = db.as_retriever(search_kwargs={"k": 12})
 
     llm = ChatGoogleGenerativeAI(
-        model="gemini-1.5-flash", # التأكد من استخدام المودل الصحيح والمتاح
+        model="gemini-2.5-flash", # التأكد من استخدام المودل الصحيح والمتاح
         temperature=0
     )
 
