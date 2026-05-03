@@ -7,10 +7,11 @@ from langchain_community.vectorstores import Chroma
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.chat_history import InMemoryChatMessageHistory
+from langchain_google_genai import ChatGoogleGenerativeAIError # استدعاء الخطأ
 
 # إعداد الصفحة
 st.set_page_config(
-  page_title="Marah - Stable Assistant", 
+  page_title="Marah - Robust Assistant", 
   page_icon="🛡️",
   layout="centered")
 
@@ -33,12 +34,6 @@ def format_history(history):
 # ===== تحميل الموارد =====
 @st.cache_resource
 def load_components():
-    # التأكد من وجود مفتاح الـ API
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        st.error("⚠️ مفتاح Google API غير موجود في ملف .env")
-        st.stop()
-
     embeddings = HuggingFaceEmbeddings(
         model_name="paraphrase-multilingual-MiniLM-L12-v2"
     )
@@ -48,10 +43,10 @@ def load_components():
         embedding_function=embeddings
     )
 
-    retriever = db.as_retriever(search_kwargs={"k": 15})
+    retriever = db.as_retriever(search_kwargs={"k": 12})
 
     llm = ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash",
+        model="gemini-1.5-flash",
         temperature=0
     )
 
@@ -62,7 +57,7 @@ retriever, llm = load_components()
 # ===== الذاكرة =====
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = InMemoryChatMessageHistory()
-    st.session_state.chat_history.add_ai_message("مرحباً بك! 👋 أنا 'مرح'، مساعدك الجامعي الذكي.\n\nأجيب على أسئلتك العامة فقط، ولا يمكنني الوصول لبياناتك الشخصية.")
+    st.session_state.chat_history.add_ai_message("مرحباً بك! 👋 أنا 'مرح'، مساعدك الجامعي الذكي.\n\nأجيب من ملفات الجامعة الرسمية فقط.")
 
 # ===== UI =====
 st.title("🛡️ Marah - University Assistant (Stable)")
@@ -75,12 +70,7 @@ question = st.chat_input("Ask your question...")
 
 # ===== منطق "الموجه الآمن" (بدون API Call) =====
 def route_question_safely(question: str) -> str:
-    """
-    دالة ذكية بسيطة تحل محل الوكيل (Agent).
-    تقوم بتحليل الكلمات المفتاحية لتقرر هل السؤال شخصي أم لا.
-    هذا يمنع أخطاء الاتصال بـ Google API ويجعل التطبيق أسرع.
-    """
-    # قائمة الكلمات التي تشير لطلب بيانات شخصية
+    """تصفية الأسئلة الشخصية لتجنب الهلوسة وتقليل الطلبات غير الضرورية."""
     personal_keywords = [
         "راتب", "مرتب", "حسابي", "كلمة السر", "معدلي", "تخصصي", 
         "درجاتي", "حالة", "قبولي", "طلبي", "تسجيل", "شحنات", 
@@ -88,10 +78,8 @@ def route_question_safely(question: str) -> str:
         "طلب", "طلب التحاق", "رقم الطالب", "المقررات"
     ]
     
-    # إذا وُجدت كلمة من هذه القائمة في السؤال -> قم بالحظر
     if any(keyword in question for keyword in personal_keywords):
         return "block"
-    
     return "search"
 
 # ===== التشغيل =====
@@ -100,69 +88,56 @@ if question:
     with st.chat_message("user"):
         st.markdown(question)
 
-    # استخدام دالة التوجيه الآمن بدلاً من router_chain.invoke
     decision = route_question_safely(question)
 
     if decision == "block":
-        # رد آلي فوري ومنظم
+        # رد آلي ومحسن لغوياً
         with st.chat_message("assistant"):
-            st.warning("🔒 **تنبيه:** أنا مساعد برمجي ولا أملك صلاحية الوصول لبياناتك الشخصية.")
+            st.warning("🔒 **تنبيه هام:** أنا نظام مساعد ولا أملك صلاحية الدخول للبيانات الخاصة بك (مثل الحالة، الراتب، أو الدرجات).")
             st.markdown("""
-            للأسئلة المتعلقة بـ:
-            - 📜 حالة الطلب / الشحنات
-            - 💰 المرتبات / التسهيلات
-            - 🎓 الدرجات / المعدل التراكمي
-            - 🔑 كلمة المرور
-            
-            يرجى زيارة [بوابة الطالب الرسمية](https://portal.iugaza.edu.ps) أو التواصل مع عمادة القبول والتسجيل.
+            **للاستفسارات الشخصية يرجى زيارة:**
+            - [بوابة الطالب](https://portal.iugaza.edu.ps)
+            - عمادة القبول والتسجيل
             """)
     else:
-        # === الخطوة 1: محاولة إعادة كتابة السؤال (Agentic) ===
-        # تم وضعها داخل Try/Except لضمان عدم تعطل التطبيق
-        with st.spinner("🔍 جاري البحث..."):
+        # === منطق البحث والإجابة مع حماية من الأعطال ===
+        with st.spinner("🔍 جاري البحث والتفكير..."):
+            
+            # 1. محاولة تحسين السؤال (اختياري)
             optimized_query = question
             try:
-                rewrite_prompt = ChatPromptTemplate.from_template("""
-                أعد صياغة السؤال أدناه ليكون مناسباً للبحث في ملفات PDF والجداول.
-                أضف كلمات مفتاحية عربية مثل "معدل"، "رسوم"، "سعر الساعة".
-                
+                rewriter_prompt = ChatPromptTemplate.from_template("""
+                أعد صياغة السؤال ليكون مناسبًا للبحث في ملفات الجامعة (خاصة الجداول).
                 السؤال: {question}
-                السؤال المحسن:
+                المحسن:
                 """)
-                
-                rewriter_chain = rewrite_prompt | llm | StrOutputParser()
+                rewriter_chain = rewriter_prompt | llm | StrOutputParser()
                 optimized_query = rewriter_chain.invoke({"question": question})
-                
-                with st.expander("🔄 تفاصيل البحث (Agentic)"):
-                    st.write(f"**الأصلي:** {question}")
-                    st.write(f"**المحسن:** {optimized_query}")
-            except Exception as e:
-                # إذا فشل إعادة الصياغة، نستخدم السؤال الأصلي (Fallback)
-                st.warning("⚠️ فشل تحسين السؤال، سيتم استخدام النص الأصلي للبحث.")
+            except Exception:
+                # إذا فشل تحسين السؤال، لا نتوقف، نستخدم الأصلي
+                st.info("⚠️ تم استخدام البحث المباشر (فشل التحسين).")
                 optimized_query = question
 
-            # === الخطوة 2: البحث ===
+            # 2. البحث
             try:
                 db_docs = retriever.invoke(optimized_query)
                 db_context = format_docs(db_docs)
-            except Exception as e:
-                st.error(f"حدث خطأ في البحث: {e}")
+            except Exception:
                 db_context = ""
 
-            # === الخطوة 3: صياغة الإجابة ===
-            with st.spinner("✍️ جاري كتابة الإجابة..."):
+            # 3. الإجابة (هنا وضعنا الحماية ضد الـ Crash)
+            try:
                 if not db_docs:
                     final_answer = "عذراً، لم أجد معلومات مطابقة لسؤالك في ملفات الجامعة الرسمية."
                 else:
+                    # استخدام System Prompt بسيط وفعال لتقليل الأخطاء
                     prompt = ChatPromptTemplate.from_template("""
-                    أنت مساعد جامعي اسمه "مرح". أجب بناءً على السياق فقط.
-                    
+                    أنت مساعد جامعي. أجب بناءً على السياق فقط.
+                    إذا لم تكن الإجابة واضحة، قل "لا أعلم".
                     السياق:
                     {context}
-                    
                     السؤال:
                     {question}
-                    
                     الإجابة:
                     """)
                     
@@ -172,7 +147,29 @@ if question:
                         "question": question
                     })
 
+                # حفظ وعرض الإجابة
                 st.session_state.chat_history.add_ai_message(final_answer)
-
                 with st.chat_message("assistant"):
                     st.markdown(final_answer)
+                    
+                    # زر للمصادر
+                    if db_docs:
+                        with st.expander("🔍 المصادر"):
+                            for doc in db_docs[:3]:
+                                st.text(doc.metadata.get("source", "File"))
+
+            # === هنا نلتقط الـ Error (ChatGoogleGenerativeAIError) ===
+            except ChatGoogleGenerativeAIError as e:
+                st.error("🔴 حدث خطأ مؤقت في الاتصال بالذكاء الاصطناعي.")
+                st.markdown("**هذا قد يكون بسبب:**
+                1. ضغط عالي على السيرفر (حاول مرة أخرى بعد ثواني).
+                2. مشكلة في النص المستخرج من الملفات.")
+                
+                # نضيف رسالة في التاريخ لتوضيح أن الخطأ تقني وليس ذكي
+                error_msg = "عذراً، حدث خطأ أثناء محاولة الإجابة على سؤالك، يرجى المحاولة مرة أخرى."
+                st.session_state.chat_history.add_ai_message(error_msg)
+                with st.chat_message("assistant"):
+                    st.write(error_msg)
+                    
+            except Exception as e:
+                st.error(f"حدث خطأ غير متوقع: {e}")
